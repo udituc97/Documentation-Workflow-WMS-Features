@@ -1,10 +1,70 @@
-[build]
-  publish = "."
-  functions = "netlify/functions"
+const https = require("https");
 
-[[headers]]
-  for = "/*"
-  [headers.values]
-    X-Frame-Options = "ALLOWALL"
-    Content-Security-Policy = "frame-ancestors *"
-    Access-Control-Allow-Origin = "*"
+exports.handler = async function (event) {
+  if (event.httpMethod !== "POST") {
+    return {
+      statusCode: 405,
+      body: JSON.stringify({ error: "Method not allowed" }),
+    };
+  }
+
+  const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+  if (!ANTHROPIC_API_KEY) {
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: "API key not configured" }),
+    };
+  }
+
+  let parsedBody;
+  try {
+    parsedBody = JSON.parse(event.body);
+  } catch {
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ error: "Invalid request body" }),
+    };
+  }
+
+  const postData = JSON.stringify(parsedBody);
+
+  return new Promise((resolve) => {
+    const options = {
+      hostname: "api.anthropic.com",
+      path: "/v1/messages",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(postData),
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      let data = "";
+      res.on("data", (chunk) => { data += chunk; });
+      res.on("end", () => {
+        resolve({
+          statusCode: res.statusCode,
+          headers: {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Content-Type",
+          },
+          body: data,
+        });
+      });
+    });
+
+    req.on("error", (err) => {
+      resolve({
+        statusCode: 500,
+        body: JSON.stringify({ error: "Request failed: " + err.message }),
+      });
+    });
+
+    req.write(postData);
+    req.end();
+  });
+};
